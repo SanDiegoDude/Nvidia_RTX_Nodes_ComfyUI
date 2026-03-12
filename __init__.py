@@ -1,3 +1,5 @@
+import math
+
 import torch
 import nvvfx
 from enum import Enum
@@ -10,6 +12,8 @@ from comfy_api.latest import ComfyExtension, io
 class UpscaleType(str, Enum):
     SCALE_BY = "scale by multiplier"
     TARGET_DIMENSIONS = "target dimensions"
+    MEGAPIXEL = "megapixel target"
+    SHORT_SIDE = "short side resolution"
 
 
 class RTXVideoSuperResolution(io.ComfyNode):
@@ -18,6 +22,8 @@ class RTXVideoSuperResolution(io.ComfyNode):
         scale: float
         width: int
         height: int
+        megapixels: float
+        short_side: int
 
     @classmethod
     def define_schema(cls):
@@ -30,15 +36,21 @@ class RTXVideoSuperResolution(io.ComfyNode):
                 io.Image.Input("images"),
                 io.DynamicCombo.Input(
                     "resize_type",
-                    tooltip="Choose to scale by a multiplier or to exact target dimensions.",
+                    tooltip="Choose how to determine the output resolution.",
                     options=[
                         io.DynamicCombo.Option(UpscaleType.SCALE_BY, [
                             io.Float.Input("scale", default=2.0, min=1.0, max=4.0, step=0.01, tooltip="Scale factor (e.g., 2.0 doubles the size)."),
                         ]),
                         io.DynamicCombo.Option(UpscaleType.TARGET_DIMENSIONS, [
                             io.Int.Input("width", default=1920, min=64, max=8192, step=8, tooltip="Target width in pixels."),
-                            io.Int.Input("height", default=1080, min=64, max=8192, step=8, tooltip="Target height in pixels.")
-                        ])
+                            io.Int.Input("height", default=1080, min=64, max=8192, step=8, tooltip="Target height in pixels."),
+                        ]),
+                        io.DynamicCombo.Option(UpscaleType.MEGAPIXEL, [
+                            io.Float.Input("megapixels", default=2.0, min=0.1, max=16.0, step=0.1, tooltip="Target total megapixels (e.g., 2.0 = ~1920x1080). Aspect ratio is preserved."),
+                        ]),
+                        io.DynamicCombo.Option(UpscaleType.SHORT_SIDE, [
+                            io.Int.Input("short_side", default=1080, min=64, max=8192, step=8, tooltip="Target pixel length for the shortest side. Aspect ratio is preserved."),
+                        ]),
                     ],
                 ),
                 io.Combo.Input("quality", options=["LOW", "MEDIUM", "HIGH", "ULTRA"], default="ULTRA"),
@@ -60,6 +72,20 @@ class RTXVideoSuperResolution(io.ComfyNode):
         elif selected_type == UpscaleType.TARGET_DIMENSIONS:
             output_width = resize_type["width"]
             output_height = resize_type["height"]
+        elif selected_type == UpscaleType.MEGAPIXEL:
+            target_pixels = resize_type["megapixels"] * 1_000_000
+            current_pixels = w * h
+            scale = math.sqrt(target_pixels / current_pixels)
+            output_width = int(w * scale)
+            output_height = int(h * scale)
+        elif selected_type == UpscaleType.SHORT_SIDE:
+            target = resize_type["short_side"]
+            if h <= w:
+                scale = target / h
+            else:
+                scale = target / w
+            output_width = int(w * scale)
+            output_height = int(h * scale)
         else:
             raise ValueError(f"Unsupported resize type: {selected_type}")
 
